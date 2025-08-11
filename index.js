@@ -1,34 +1,84 @@
 // Requer as classes do discord.js de que precisamos
-const { Client, GatewayIntentBits } = require('discord.js');
+const {
+  Client,
+  Collection,
+  Events,
+  GatewayIntentBits,
+  MessageFlags,
+} = require("discord.js");
 
 // Carrega as variáveis de ambiente do arquivo .env
-require('dotenv').config();
+require("dotenv").config();
+const token = process.env.DISCORD_TOKEN;
 
-// Cria uma nova instância do Cliente
-// Intents são as permissões que o bot precisa para funcionar
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
-});
+// Requireds
+const fs = require("node:fs");
+const path = require("node:path");
 
-// Quando o cliente estiver pronto, execute este código (apenas uma vez)
-client.once('ready', () => {
-    console.log(`Bot pronto! Logado como ${client.user.tag}`);
-});
+// Create a new client instance
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// Escuta por novas mensagens
-client.on('messageCreate', message => {
-    // Ignora mensagens de outros bots para não criar loops
-    if (message.author.bot) return;
+// Create a new collection for commands
+client.commands = new Collection();
 
-    // Responde "pong!" se a mensagem for "ping"
-    if (message.content === 'ping') {
-        message.reply('pong!');
+// Load commands from the commands directory
+const foldersPath = path.join(__dirname, "commands");
+const commandFolders = fs.readdirSync(foldersPath);
+
+for (const folder of commandFolders) {
+  const commandsPath = path.join(foldersPath, folder);
+  const commandFiles = fs
+    .readdirSync(commandsPath)
+    .filter((file) => file.endsWith(".js"));
+  for (const file of commandFiles) {
+    const filePath = path.join(commandsPath, file);
+    const command = require(filePath);
+    // Set a new item in the Collection with the key as the command name and the value as the exported module
+    if ("data" in command && "execute" in command) {
+      client.commands.set(command.data.name, command);
+    } else {
+      console.log(
+        `[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`
+      );
     }
+  }
+}
+
+// When the client is ready, run this code (only once).
+// The distinction between `client: Client<boolean>` and `readyClient: Client<true>` is important for TypeScript developers.
+// It makes some properties non-nullable.
+client.once(Events.ClientReady, (readyClient) => {
+  console.log(`Ready! Logged in as ${readyClient.user.tag}`);
 });
 
-// Faz o login no Discord com o token do seu cliente
-client.login(process.env.DISCORD_TOKEN);
+// Log in to Discord with your client's token
+client.login(token);
+
+// Listen for interaction events
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const command = interaction.client.commands.get(interaction.commandName);
+
+  if (!command) {
+    console.error(`No command matching ${interaction.commandName} was found.`);
+    return;
+  }
+
+  try {
+    await command.execute(interaction);
+  } catch (error) {
+    console.error(error);
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp({
+        content: "There was an error while executing this command!",
+        flags: MessageFlags.Ephemeral,
+      });
+    } else {
+      await interaction.reply({
+        content: "There was an error while executing this command!",
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+  }
+});
